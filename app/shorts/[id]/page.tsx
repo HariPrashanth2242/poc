@@ -1,20 +1,60 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import Hls from 'hls.js';
+import Hls, { HlsConfig } from 'hls.js';
 
 // =================== API CONFIGURATION ===================
 const API_BASE_URL = 'https://dev-api.wedzat.com';
 const MASTER_PLAYLISTS_ENDPOINT = '/hub/master-playlists';
 
+// =================== TYPES ===================
+interface Video {
+  id: string;
+  url: string;
+}
+
+interface VideoPositions {
+  [key: string]: number;
+}
+
+interface NetworkSpeed {
+  networkQuality: string;
+  bandwidth: number;
+  effectiveType: string;
+}
+
+interface VideoPlayerProps {
+  src: string;
+  isActive: boolean;
+  shouldLoad: boolean;
+  shouldPreload: boolean;
+  onLoadedMetadata?: () => void;
+  isPaused: boolean;
+  onTogglePlay: () => void;
+  networkQuality: string;
+  videoId: string;
+  videoIndex: number;
+  currentIndex: number;
+  savedPosition: number;
+  onPositionUpdate?: (videoId: string, position: number) => void;
+  onVideoReady?: (videoId: string, videoIndex: number) => void;
+  direction: string;
+}
+
+interface APILoadingScreenProps {
+  error: string | null;
+}
+
+interface IconProps {
+  size?: number;
+}
+
 // =================== API UTILITIES ===================
-const fetchVideosFromAPI = async () => {
+const fetchVideosFromAPI = async (): Promise<Video[]> => {
   try {
     const response = await fetch(`${API_BASE_URL}${MASTER_PLAYLISTS_ENDPOINT}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        // Add any required headers like Authorization if needed
-        // 'Authorization': 'Bearer your-token-here',
       },
     });
 
@@ -25,54 +65,51 @@ const fetchVideosFromAPI = async () => {
     const videoUrls = await response.json();
     
     // Transform the API response to match our video structure
-    // Assuming the API returns an array of URLs as shown in your Postman response
-    const transformedVideos = videoUrls.map((url, index) => ({
-      id: String(index + 1), // Generate sequential IDs
-      url: url.trim(), // Remove any whitespace
+    const transformedVideos = videoUrls.map((url: string, index: number) => ({
+      id: String(index + 1),
+      url: url.trim(),
     }));
 
-    console.log(`âœ… Fetched ${transformedVideos.length} videos from API`);
+    console.log(`✅ Fetched ${transformedVideos.length} videos from API`);
     return transformedVideos;
   } catch (error) {
-    console.error('âŒ Failed to fetch videos from API:', error);
-    throw error; // Re-throw the error to be handled by the component
+    console.error('❌ Failed to fetch videos from API:', error);
+    throw error;
   }
 };
 
 // =================== URL PARAMETER UTILITIES ===================
-const getUrlParams = () => {
+const getUrlParams = (): { [key: string]: string } => {
   if (typeof window === 'undefined') return {};
   const urlParams = new URLSearchParams(window.location.search);
   return Object.fromEntries(urlParams.entries());
 };
 
-const updateUrl = (videoId) => {
+const updateUrl = (videoId: string): void => {
   if (typeof window === 'undefined') return;
   const newUrl = `${window.location.pathname}?id=${videoId}`;
   window.history.replaceState(null, '', newUrl);
 };
 
-const getCurrentVideoIdFromUrl = (videos) => {
+const getCurrentVideoIdFromUrl = (videos: Video[]): string => {
   const params = getUrlParams();
   const urlId = params.id;
   
-  // Check if the ID from URL exists in our videos
   if (urlId && videos.some(v => v.id === urlId)) {
     return urlId;
   }
   
-  // Default to first video if no valid ID in URL
   return videos.length > 0 ? videos[0].id : '1';
 };
 
 // =================== NETWORK SPEED DETECTOR ===================
-const useNetworkSpeed = () => {
+const useNetworkSpeed = (): NetworkSpeed => {
   const [networkQuality, setNetworkQuality] = useState('high');
   const [bandwidth, setBandwidth] = useState(0);
   const [effectiveType, setEffectiveType] = useState('4g');
 
   useEffect(() => {
-    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    const connection = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
     
     if (connection) {
       const updateConnectionStatus = () => {
@@ -102,31 +139,43 @@ const useNetworkSpeed = () => {
 };
 
 // =================== ICONS ===================
-const ChevronUp = ({ size = 24 }) => (
+const ChevronUp: React.FC<IconProps> = ({ size = 24 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="18 15 12 9 6 15"></polyline>
   </svg>
 );
 
-const ChevronDown = ({ size = 24 }) => (
+const ChevronDown: React.FC<IconProps> = ({ size = 24 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="6 9 12 15 18 9"></polyline>
   </svg>
 );
 
-const PlayIcon = ({ size = 64 }) => (
+const PlayIcon: React.FC<IconProps> = ({ size = 64 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="white" opacity="0.9">
     <path d="M8 5v14l11-7z"/>
   </svg>
 );
 
-const PauseIcon = ({ size = 64 }) => (
+const PauseIcon: React.FC<IconProps> = ({ size = 64 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="white" opacity="0.9">
     <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
   </svg>
 );
 
-const LoadingSpinner = () => (
+const VolumeIcon: React.FC<IconProps> = ({ size = 24 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="white">
+    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+  </svg>
+);
+
+const VolumeMutedIcon: React.FC<IconProps> = ({ size = 24 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="white">
+    <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
+  </svg>
+);
+
+const LoadingSpinner: React.FC = () => (
   <div style={{
     position: 'absolute',
     top: '50%',
@@ -146,7 +195,7 @@ const LoadingSpinner = () => (
 );
 
 // =================== API LOADING COMPONENT ===================
-const APILoadingScreen = ({ error }) => (
+const APILoadingScreen: React.FC<APILoadingScreenProps> = ({ error }) => (
   <div style={{
     position: 'fixed',
     top: 0,
@@ -164,7 +213,7 @@ const APILoadingScreen = ({ error }) => (
     {error ? (
       <>
         <div style={{ color: '#ef4444', fontSize: '18px', fontWeight: 'bold' }}>
-          âŒ Failed to load videos
+          ❌ Failed to load videos
         </div>
         <div style={{ color: '#999', fontSize: '14px', textAlign: 'center', maxWidth: '400px' }}>
           {error}
@@ -200,7 +249,7 @@ const APILoadingScreen = ({ error }) => (
 );
 
 // =================== VIDEO PLAYER COMPONENT ===================
-const VideoPlayer = ({ 
+const VideoPlayer: React.FC<VideoPlayerProps> = ({ 
   src, 
   isActive, 
   shouldLoad,
@@ -217,12 +266,12 @@ const VideoPlayer = ({
   onVideoReady,
   direction
 }) => {
-  const videoRef = useRef(null);
-  const hlsRef = useRef(null);
-  const [error, setError] = useState(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [showIcon, setShowIcon] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [currentQuality, setCurrentQuality] = useState(null);
+  const [currentQuality, setCurrentQuality] = useState<number | null>(null);
   const [bufferProgress, setBufferProgress] = useState(0);
   const [isPreloaded, setIsPreloaded] = useState(false);
   const [manifestLoaded, setManifestLoaded] = useState(false);
@@ -231,9 +280,13 @@ const VideoPlayer = ({
   const [duration, setDuration] = useState(0);
   const [hasResumed, setHasResumed] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(true); // Start muted for autoplay
+  const [volume, setVolume] = useState(0.7);
+  const [showVolumeControl, setShowVolumeControl] = useState(false);
   
   // Play promise management to prevent interruption errors
-  const playPromiseRef = useRef(null);
+  const playPromiseRef = useRef<Promise<void> | null>(null);
+  const lastSavedTimeRef = useRef(0);
   
   const initializationStateRef = useRef({
     hlsInitialized: false,
@@ -242,7 +295,7 @@ const VideoPlayer = ({
     loadStarted: false
   });
 
-  const getLoadingMode = () => {
+  const getLoadingMode = (): string => {
     if (!shouldLoad && !shouldPreload) return 'none';
     if (shouldPreload) return 'preload';
     return 'full';
@@ -250,7 +303,7 @@ const VideoPlayer = ({
 
   const loadingMode = getLoadingMode();
 
-  const formatTime = (timeInSeconds) => {
+  const formatTime = (timeInSeconds: number): string => {
     if (!timeInSeconds || isNaN(timeInSeconds)) return '0:00';
     const minutes = Math.floor(timeInSeconds / 60);
     const seconds = Math.floor(timeInSeconds % 60);
@@ -258,17 +311,22 @@ const VideoPlayer = ({
   };
 
   // Enhanced play function with promise management
-  const attemptPlay = useCallback(async () => {
+  const attemptPlay = useCallback(async (): Promise<void> => {
     const video = videoRef.current;
-    if (!video || playPromiseRef.current) return;
+    if (!video) return;
 
     try {
-      // Set video attributes for better autoplay support
-      video.muted = false;
-      video.setAttribute('autoplay', '');
-      video.setAttribute('playsinline', '');
-      
-      console.log(`[${videoId}] ðŸš€ Starting playback`);
+      // Clear any existing play promise
+      if (playPromiseRef.current) {
+        try { 
+          await playPromiseRef.current; 
+        } catch { 
+          // Ignore errors from previous promise
+        }
+        playPromiseRef.current = null;
+      }
+
+      console.log(`[${videoId}] 🚀 Starting playback`);
       
       const playPromise = video.play();
       playPromiseRef.current = playPromise;
@@ -278,25 +336,30 @@ const VideoPlayer = ({
       setIsPlaying(true);
       playPromiseRef.current = null;
       
-      console.log(`[${videoId}] âœ… Playing successfully`);
+      console.log(`[${videoId}] ✅ Playing successfully`);
 
-    } catch (error) {
+    } catch (error: any) {
       playPromiseRef.current = null;
       setIsPlaying(false);
       
       if (error.name === 'AbortError') {
         console.log(`[${videoId}] Play was aborted, retrying...`);
-        // Retry after a short delay
         setTimeout(() => attemptPlay(), 200);
         return;
       }
       
       console.log(`[${videoId}] Play failed:`, error.message);
+      
+      // If autoplay is blocked, wait for user interaction
+      if (error.name === 'NotAllowedError') {
+        console.log(`[${videoId}] Autoplay blocked, waiting for user interaction`);
+        // Don't retry automatically - wait for user click
+      }
     }
   }, [videoId]);
 
   // Safe pause function
-  const attemptPause = useCallback(async () => {
+  const attemptPause = useCallback(async (): Promise<void> => {
     const video = videoRef.current;
     if (!video) return;
 
@@ -313,22 +376,22 @@ const VideoPlayer = ({
 
       video.pause();
       setIsPlaying(false);
-      console.log(`[${videoId}] â¸ï¸ Paused`);
+      console.log(`[${videoId}] ⏸️ Paused`);
       
       // Save position when pausing
       if (video.currentTime > 0) {
         onPositionUpdate?.(videoId, video.currentTime);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.log(`[${videoId}] Pause error:`, error.message);
     }
   }, [videoId, onPositionUpdate]);
 
-  const getHlsConfig = useCallback((quality, mode) => {
-    const baseConfig = {
+  // Fixed HLS config without problematic properties
+  const getHlsConfig = useCallback((quality: string, mode: string): Partial<HlsConfig> => {
+    const baseConfig: Partial<HlsConfig> = {
       debug: false,
       enableWorker: true,
-      lowLatencyMode: false,
       autoStartLoad: mode === 'full',
       
       maxBufferLength: mode === 'preload' ? 3 : 6,
@@ -336,7 +399,8 @@ const VideoPlayer = ({
       maxBufferSize: mode === 'preload' ? 2 * 1000 * 1000 : 4 * 1000 * 1000,
       maxBufferHole: 0.3,
       
-      backBufferLength: 5,
+      liveBackBufferLength: 5,
+
       startLevel: -1,
       
       abrEwmaDefaultEstimate: mode === 'preload' ? 300000 : 500000,
@@ -357,8 +421,6 @@ const VideoPlayer = ({
       fragLoadingTimeOut: 20000,
       fragLoadingMaxRetry: 6,
       fragLoadingRetryDelay: 1000,
-      
-      progressive: true,
       
       highBufferWatchdogPeriod: 2,
       nudgeMaxRetry: 3,
@@ -388,7 +450,7 @@ const VideoPlayer = ({
     return baseConfig;
   }, []);
 
-  const handleVideoReady = useCallback(() => {
+  const handleVideoReady = useCallback((): void => {
     const video = videoRef.current;
     if (!video) return;
 
@@ -398,15 +460,17 @@ const VideoPlayer = ({
     setHasResumed(false);
     
     // Only resume if going forward and has meaningful saved position
-    if (savedPosition && savedPosition > 3 && isActive && direction === 'forward') {
-      console.log(`[${videoId}] ðŸ”„ Resuming from ${formatTime(savedPosition)}`);
+    const RESUME_THRESHOLD = 3;
+    if (savedPosition && savedPosition > RESUME_THRESHOLD && isActive && direction === 'forward') {
+      console.log(`[${videoId}] 💾 Resuming from ${formatTime(savedPosition)}`);
       
-      const seekToPosition = () => {
+      const seekToPosition = (): void => {
         try {
           video.currentTime = savedPosition;
           setCurrentTime(savedPosition);
           setHasResumed(true);
-        } catch (err) {
+          console.log(`[${videoId}] ✅ Successfully resumed from saved position`);
+        } catch (err: any) {
           console.log(`[${videoId}] Resume failed:`, err.message);
           setHasResumed(true);
         }
@@ -424,21 +488,84 @@ const VideoPlayer = ({
         setCurrentTime(0);
       }
       setHasResumed(true);
+      console.log(`[${videoId}] 🎬 Starting from beginning`);
     }
     
     onVideoReady?.(videoId, videoIndex);
   }, [savedPosition, videoId, videoIndex, hasResumed, isActive, onVideoReady, direction]);
+
+  // Handle volume changes
+  const handleVolumeChange = useCallback((newVolume: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    
+    const clampedVolume = Math.max(0, Math.min(1, newVolume));
+    setVolume(clampedVolume);
+    video.volume = clampedVolume;
+    
+    if (clampedVolume > 0 && isMuted) {
+      setIsMuted(false);
+      video.muted = false;
+    } else if (clampedVolume === 0 && !isMuted) {
+      setIsMuted(true);
+      video.muted = true;
+    }
+  }, [isMuted]);
+
+  const toggleMute = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    
+    if (isMuted) {
+      // Unmute and set to last volume
+      setIsMuted(false);
+      video.muted = false;
+      video.volume = volume > 0 ? volume : 0.7;
+      setVolume(video.volume);
+    } else {
+      // Mute
+      setIsMuted(true);
+      video.muted = true;
+    }
+    setShowVolumeControl(true);
+    setTimeout(() => setShowVolumeControl(false), 2000);
+  }, [isMuted, volume]);
+
+  // Cleanup HLS on src change or unmount
+  useEffect(() => {
+    return () => {
+      if (playPromiseRef.current) {
+        playPromiseRef.current.catch(() => {});
+        playPromiseRef.current = null;
+      }
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      initializationStateRef.current = {
+        hlsInitialized: false,
+        segmentsLoaded: 0,
+        isPreloadComplete: false,
+        loadStarted: false
+      };
+    };
+  }, [src]); // Added src dependency to cleanup on source change
 
   // Initialize HLS player
   useEffect(() => {
     const video = videoRef.current;
     if (!video || loadingMode === 'none') return;
 
-    if (initializationStateRef.current.hlsInitialized) {
-      if (isActive && segmentsReady) {
-        handleVideoReady();
-      }
-      return;
+    // Cleanup previous instance
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+      initializationStateRef.current = {
+        hlsInitialized: false,
+        segmentsLoaded: 0,
+        isPreloadComplete: false,
+        loadStarted: false
+      };
     }
 
     const isHLS = src.includes('.m3u8');
@@ -453,66 +580,12 @@ const VideoPlayer = ({
     // Set video attributes for autoplay
     video.setAttribute('playsinline', '');
     video.setAttribute('webkit-playsinline', '');
-    video.muted = false;
+    video.crossOrigin = 'anonymous'; // Important for CORS
+    video.muted = isMuted; // Start muted for autoplay
+    video.volume = volume;
 
     if (isHLS) {
-      if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = src;
-        video.preload = isPreloadMode ? 'metadata' : 'auto';
-        
-        if (!isPreloadMode) {
-          video.load();
-        }
-        
-        const handleLoadedData = () => {
-          setIsLoading(false);
-          setSegmentsReady(true);
-          if (isPreloadMode) {
-            setIsPreloaded(true);
-            console.log(`[${videoId}] âœ… Safari preload complete`);
-          }
-          handleVideoReady();
-        };
-
-        const handleLoadedMetadata = () => {
-          setManifestLoaded(true);
-          setDuration(video.duration || 0);
-          onLoadedMetadata?.();
-        };
-
-        const handleTimeUpdate = () => {
-          const newTime = video.currentTime || 0;
-          setCurrentTime(newTime);
-          
-          if (isActive && Math.floor(newTime) % 2 === 0 && newTime > 0) {
-            onPositionUpdate?.(videoId, newTime);
-          }
-        };
-
-        const handlePlay = () => {
-          setIsPlaying(true);
-          console.log(`[${videoId}] â–¶ï¸ Started playing`);
-        };
-
-        const handlePause = () => {
-          setIsPlaying(false);
-          console.log(`[${videoId}] â¸ï¸ Paused`);
-        };
-        
-        video.addEventListener('loadeddata', handleLoadedData);
-        video.addEventListener('loadedmetadata', handleLoadedMetadata);
-        video.addEventListener('timeupdate', handleTimeUpdate);
-        video.addEventListener('play', handlePlay);
-        video.addEventListener('pause', handlePause);
-        
-        return () => {
-          video.removeEventListener('loadeddata', handleLoadedData);
-          video.removeEventListener('loadedmetadata', handleLoadedMetadata);
-          video.removeEventListener('timeupdate', handleTimeUpdate);
-          video.removeEventListener('play', handlePlay);
-          video.removeEventListener('pause', handlePause);
-        };
-      } else if (Hls.isSupported()) {
+      if (Hls.isSupported()) {
         const hls = new Hls(getHlsConfig(networkQuality, loadingMode));
 
         hls.loadSource(src);
@@ -520,23 +593,26 @@ const VideoPlayer = ({
 
         let segmentCount = 0;
 
-        const handleTimeUpdate = () => {
+        const handleTimeUpdate = (): void => {
           const newTime = video.currentTime || 0;
           setCurrentTime(newTime);
           
-          if (isActive && Math.floor(newTime) % 2 === 0 && newTime > 0) {
+          // Throttled position saving
+          const currentTimeFloor = Math.floor(newTime);
+          if (isActive && currentTimeFloor - lastSavedTimeRef.current >= 2) {
+            lastSavedTimeRef.current = currentTimeFloor;
             onPositionUpdate?.(videoId, newTime);
           }
         };
 
-        const handlePlay = () => {
+        const handlePlay = (): void => {
           setIsPlaying(true);
-          console.log(`[${videoId}] â–¶ï¸ HLS Started playing`);
+          console.log(`[${videoId}] ▶️ HLS Started playing`);
         };
 
-        const handlePause = () => {
+        const handlePause = (): void => {
           setIsPlaying(false);
-          console.log(`[${videoId}] â¸ï¸ HLS Paused`);
+          console.log(`[${videoId}] ⏸️ HLS Paused`);
         };
 
         video.addEventListener('timeupdate', handleTimeUpdate);
@@ -551,13 +627,13 @@ const VideoPlayer = ({
           segmentCount++;
           initializationStateRef.current.segmentsLoaded = segmentCount;
           
-          console.log(`[${videoId}] âœ… Segment ${data.frag.sn} loaded (total: ${segmentCount})`);
+          console.log(`[${videoId}] ✅ Segment ${data.frag.sn} loaded (total: ${segmentCount})`);
           
           if (isPreloadMode && segmentCount >= 1 && !initializationStateRef.current.isPreloadComplete) {
             setIsPreloaded(true);
             setSegmentsReady(true);
             initializationStateRef.current.isPreloadComplete = true;
-            console.log(`[${videoId}] âœ… Preload complete`);
+            console.log(`[${videoId}] ✅ Preload complete`);
           }
           
           if (video.buffered.length > 0) {
@@ -568,7 +644,7 @@ const VideoPlayer = ({
         });
 
         hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
-          console.log(`[${videoId}] âœ… Manifest parsed - ${data.levels.length} quality levels`);
+          console.log(`[${videoId}] ✅ Manifest parsed - ${data.levels.length} quality levels`);
           setManifestLoaded(true);
           setIsLoading(false);
           setDuration(video.duration || 0);
@@ -587,10 +663,8 @@ const VideoPlayer = ({
             initializationStateRef.current.loadStarted = true;
           }
           
-          setTimeout(() => {
-            setSegmentsReady(true);
-            handleVideoReady();
-          }, 100);
+          setSegmentsReady(true);
+          handleVideoReady();
         });
 
         hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
@@ -600,15 +674,13 @@ const VideoPlayer = ({
         });
 
         hls.on(Hls.Events.ERROR, (event, data) => {
-          console.warn(`[${videoId}] HLS Error:`, data.type, data.details);
+          console.warn(`[${videoId}] HLS ERROR`, data);
           
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
                 console.log(`[${videoId}] Network error, retrying...`);
-                setTimeout(() => {
-                  if (hls) hls.startLoad();
-                }, 1000);
+                hls.startLoad();
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
                 console.log(`[${videoId}] Media error, recovering...`);
@@ -632,29 +704,112 @@ const VideoPlayer = ({
           video.removeEventListener('play', handlePlay);
           video.removeEventListener('pause', handlePause);
         };
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari native HLS support
+        video.src = src;
+        video.preload = isPreloadMode ? 'metadata' : 'auto';
+        
+        if (!isPreloadMode) {
+          video.load();
+        }
+        
+        const handleLoadedData = (): void => {
+          setIsLoading(false);
+          setSegmentsReady(true);
+          if (isPreloadMode) {
+            setIsPreloaded(true);
+            console.log(`[${videoId}] ✅ Safari preload complete`);
+          }
+          handleVideoReady();
+        };
+
+        const handleLoadedMetadata = (): void => {
+          setManifestLoaded(true);
+          setDuration(video.duration || 0);
+          onLoadedMetadata?.();
+        };
+
+        const handleTimeUpdate = (): void => {
+          const newTime = video.currentTime || 0;
+          setCurrentTime(newTime);
+          
+          // Throttled position saving
+          const currentTimeFloor = Math.floor(newTime);
+          if (isActive && currentTimeFloor - lastSavedTimeRef.current >= 2) {
+            lastSavedTimeRef.current = currentTimeFloor;
+            onPositionUpdate?.(videoId, newTime);
+          }
+        };
+
+        const handlePlay = (): void => {
+          setIsPlaying(true);
+          console.log(`[${videoId}] ▶️ Started playing`);
+        };
+
+        const handlePause = (): void => {
+          setIsPlaying(false);
+          console.log(`[${videoId}] ⏸️ Paused`);
+        };
+        
+        video.addEventListener('loadeddata', handleLoadedData);
+        video.addEventListener('loadedmetadata', handleLoadedMetadata);
+        video.addEventListener('timeupdate', handleTimeUpdate);
+        video.addEventListener('play', handlePlay);
+        video.addEventListener('pause', handlePause);
+        
+        return () => {
+          video.removeEventListener('loadeddata', handleLoadedData);
+          video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+          video.removeEventListener('timeupdate', handleTimeUpdate);
+          video.removeEventListener('play', handlePlay);
+          video.removeEventListener('pause', handlePause);
+        };
       } else {
         setError('HLS not supported');
         setIsLoading(false);
       }
     } else {
+      // Regular video file
       video.src = src;
       video.preload = isPreloadMode ? 'metadata' : 'auto';
       if (!isPreloadMode) video.load();
       
-      const handleLoadedData = () => {
+      const handleLoadedData = (): void => {
         setIsLoading(false);
         setSegmentsReady(true);
         handleVideoReady();
       };
+
+      const handleLoadedMetadata = (): void => {
+        setManifestLoaded(true);
+        setDuration(video.duration || 0);
+        onLoadedMetadata?.();
+      };
+
+      const handleTimeUpdate = (): void => {
+        const newTime = video.currentTime || 0;
+        setCurrentTime(newTime);
+        
+        // Throttled position saving
+        const currentTimeFloor = Math.floor(newTime);
+        if (isActive && currentTimeFloor - lastSavedTimeRef.current >= 2) {
+          lastSavedTimeRef.current = currentTimeFloor;
+          onPositionUpdate?.(videoId, newTime);
+        }
+      };
       
       video.addEventListener('loadeddata', handleLoadedData);
+      video.addEventListener('loadedmetadata', handleLoadedMetadata);
+      video.addEventListener('timeupdate', handleTimeUpdate);
       initializationStateRef.current.hlsInitialized = true;
       
       return () => {
         video.removeEventListener('loadeddata', handleLoadedData);
+        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        video.removeEventListener('timeupdate', handleTimeUpdate);
       };
     }
-  }, [src, loadingMode, networkQuality, videoId, getHlsConfig, onLoadedMetadata, handleVideoReady, isActive, segmentsReady, onPositionUpdate]);
+  }, [src, loadingMode, networkQuality, videoId, getHlsConfig, onLoadedMetadata, handleVideoReady, isActive, onPositionUpdate, isMuted, volume]);
 
   // Reset video state on navigation
   useEffect(() => {
@@ -675,7 +830,7 @@ const VideoPlayer = ({
     const video = videoRef.current;
     if (!video || loadingMode === 'none' || !manifestLoaded || !segmentsReady) return;
 
-    const handlePlayPause = async () => {
+    const handlePlayPause = async (): Promise<void> => {
       if (isActive && !isPaused && hasResumed) {
         // Only attempt play if video is fully ready
         if (video.readyState >= 2) {
@@ -700,10 +855,9 @@ const VideoPlayer = ({
     const video = videoRef.current;
     if (!video || loadingMode === 'none') return;
 
-    const updateBuffer = () => {
+    const updateBuffer = (): void => {
       if (video.buffered.length > 0) {
         const buffered = video.buffered.end(0);
-        const current = video.currentTime;
         const duration = video.duration || 1;
         const newProgress = (buffered / duration) * 100;
         
@@ -717,31 +871,11 @@ const VideoPlayer = ({
     return () => clearInterval(interval);
   }, [videoId, loadingMode, bufferProgress]);
 
-  const handleClick = () => {
+  const handleClick = (): void => {
     onTogglePlay();
     setShowIcon(true);
     setTimeout(() => setShowIcon(false), 500);
   };
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (playPromiseRef.current) {
-        playPromiseRef.current.catch(() => {});
-        playPromiseRef.current = null;
-      }
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
-      initializationStateRef.current = {
-        hlsInitialized: false,
-        segmentsLoaded: 0,
-        isPreloadComplete: false,
-        loadStarted: false
-      };
-    };
-  }, []);
 
   if (error) {
     return (
@@ -794,7 +928,7 @@ const VideoPlayer = ({
         ref={videoRef}
         playsInline
         loop
-        muted
+        muted={isMuted}
         autoPlay
         preload={loadingMode === 'preload' ? 'metadata' : 'auto'}
         style={{
@@ -822,7 +956,7 @@ const VideoPlayer = ({
           boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
           border: '1px solid rgba(34, 197, 94, 0.5)'
         }}>
-          âš¡ Ready {savedPosition > 0 && direction === 'forward' && `@ ${formatTime(savedPosition)}`}
+          ⚡ Ready {savedPosition > 0 && direction === 'forward' && `@ ${formatTime(savedPosition)}`}
         </div>
       )}
       
@@ -854,6 +988,56 @@ const VideoPlayer = ({
           <PlayIcon />
         </div>
       )}
+
+      {/* Volume Control */}
+      <div style={{
+        position: 'absolute',
+        bottom: '20px',
+        right: '20px',
+        zIndex: 10,
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px'
+      }}>
+        {showVolumeControl && (
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.1"
+            value={volume}
+            onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+            style={{
+              width: '80px',
+              height: '4px',
+              borderRadius: '2px',
+              backgroundColor: 'rgba(255, 255, 255, 0.3)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
+          />
+        )}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleMute();
+          }}
+          style={{
+            background: 'rgba(0, 0, 0, 0.7)',
+            border: 'none',
+            borderRadius: '50%',
+            width: '36px',
+            height: '36px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            color: 'white'
+          }}
+        >
+          {isMuted ? <VolumeMutedIcon size={20} /> : <VolumeIcon size={20} />}
+        </button>
+      </div>
 
       {isActive && duration > 0 && (
         <div style={{
@@ -934,33 +1118,29 @@ const VideoPlayer = ({
 
 // =================== MAIN COMPONENT WITH API INTEGRATION ===================
 export default function ReelsPlayer() {
-  const [videos, setVideos] = useState([]);
+  const [videos, setVideos] = useState<Video[]>([]);
   const [isLoadingAPI, setIsLoadingAPI] = useState(true);
-  const [apiError, setApiError] = useState(null);
+  const [apiError, setApiError] = useState<string | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
   const [direction, setDirection] = useState('forward');
   const [currentVideoId, setCurrentVideoId] = useState('1');
-  const containerRef = useRef(null);
-  const scrollTimeoutRef = useRef(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isScrollingRef = useRef(false);
   const { networkQuality, bandwidth, effectiveType } = useNetworkSpeed();
 
-  interface VideoPositions {
-    [key: string]: number;
-  }
-  
-  const videoPositionsRef = useRef({});
-  const [videoPositions, setVideoPositions] = useState({});
+  const videoPositionsRef = useRef<VideoPositions>({});
+  const [videoPositions, setVideoPositions] = useState<VideoPositions>({});
 
   // Load videos from API on mount
   useEffect(() => {
-    const loadVideos = async () => {
+    const loadVideos = async (): Promise<void> => {
       try {
         setIsLoadingAPI(true);
         setApiError(null);
-        console.log('ðŸ”„ Fetching videos from API...');
+        console.log('🔍 Fetching videos from API...');
         
         const fetchedVideos = await fetchVideosFromAPI();
         setVideos(fetchedVideos);
@@ -972,20 +1152,20 @@ export default function ReelsPlayer() {
         if (videoIndex !== -1) {
           setCurrentIndex(videoIndex);
           setCurrentVideoId(urlVideoId);
-          console.log(`ðŸŽ¯ Initialized with video ID: ${urlVideoId} (index: ${videoIndex})`);
+          console.log(`🎬 Initialized with video ID: ${urlVideoId} (index: ${videoIndex})`);
         } else {
           // If invalid ID in URL, default to first video and update URL
           setCurrentIndex(0);
           setCurrentVideoId(fetchedVideos[0].id);
           updateUrl(fetchedVideos[0].id);
-          console.log(`âš ï¸ Invalid video ID in URL, defaulting to first video`);
+          console.log(`⚠️ Invalid video ID in URL, defaulting to first video`);
         }
         
         setIsInitialized(true);
-        console.log('âœ… Reels Player initialized with API data');
+        console.log('✅ Reels Player initialized with API data');
         
-      } catch (error) {
-        console.error('âŒ Failed to load videos from API:', error);
+      } catch (error: any) {
+        console.error('❌ Failed to load videos from API:', error);
         setApiError(error.message);
       } finally {
         setIsLoadingAPI(false);
@@ -999,7 +1179,7 @@ export default function ReelsPlayer() {
   useEffect(() => {
     if (videos.length === 0) return;
 
-    const handlePopState = () => {
+    const handlePopState = (): void => {
       const urlVideoId = getCurrentVideoIdFromUrl(videos);
       const videoIndex = videos.findIndex(v => v.id === urlVideoId);
       
@@ -1009,7 +1189,7 @@ export default function ReelsPlayer() {
         setCurrentIndex(videoIndex);
         setCurrentVideoId(urlVideoId);
         setIsPaused(false);
-        console.log(`ðŸ”„ URL changed to video ID: ${urlVideoId} (index: ${videoIndex})`);
+        console.log(`🔗 URL changed to video ID: ${urlVideoId} (index: ${videoIndex})`);
       }
     };
 
@@ -1017,7 +1197,7 @@ export default function ReelsPlayer() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [currentIndex, videos]);
 
-  const handlePositionUpdate = useCallback((videoId, position) => {
+  const handlePositionUpdate = useCallback((videoId: string, position: number): void => {
     const duration = videoPositionsRef.current[`${videoId}_duration`] || 0;
     
     if (duration > 0 && position > 5 && position < (duration - 5)) {
@@ -1027,15 +1207,15 @@ export default function ReelsPlayer() {
         ...prev,
         [videoId]: position
       }));
-      console.log(`[${videoId}] ðŸ’¾ Position saved: ${Math.floor(position / 60)}:${(Math.floor(position % 60)).toString().padStart(2, '0')}`);
+      console.log(`[${videoId}] 💾 Position saved: ${Math.floor(position / 60)}:${(Math.floor(position % 60)).toString().padStart(2, '0')}`);
     }
   }, []);
 
-  const handleVideoReady = useCallback((videoId, videoIndex) => {
+  const handleVideoReady = useCallback((videoId: string, videoIndex: number): void => {
     console.log(`[${videoId}] Video ready for playback`);
   }, []);
 
-  const getSavedPosition = useCallback((videoId) => {
+  const getSavedPosition = useCallback((videoId: string): number => {
     const position = videoPositionsRef.current[videoId] || videoPositions[videoId] || 0;
     if (position < 2) {
       return 0;
@@ -1043,21 +1223,21 @@ export default function ReelsPlayer() {
     return position;
   }, [videoPositions]);
 
-  const shouldLoadVideo = useCallback((index) => {
+  const shouldLoadVideo = useCallback((index: number): boolean => {
     return index === currentIndex;
   }, [currentIndex]);
 
-  const shouldPreloadVideo = useCallback((index) => {
+  const shouldPreloadVideo = useCallback((index: number): boolean => {
     return index > currentIndex && index <= currentIndex + 2;
   }, [currentIndex]);
 
   // Navigate to specific video by ID
-  const navigateToVideoId = useCallback((videoId, navigationDirection = 'forward') => {
+  const navigateToVideoId = useCallback((videoId: string, navigationDirection = 'forward'): void => {
     const videoIndex = videos.findIndex(v => v.id === videoId);
     if (videoIndex === -1) return;
     
     // Save current video position before navigating
-    const currentVideo = containerRef.current?.querySelector(`[data-video-index="${currentIndex}"] video`);
+    const currentVideo = containerRef.current?.querySelector(`[data-video-index="${currentIndex}"] video`) as HTMLVideoElement;
     if (currentVideo && currentVideo.currentTime > 0) {
       const currentVideoId = videos[currentIndex]?.id;
       if (currentVideoId) {
@@ -1073,11 +1253,11 @@ export default function ReelsPlayer() {
     // Update URL with video ID
     updateUrl(videoId);
     
-    console.log(`ðŸŽ¯ Navigating to video ID: ${videoId} (index: ${videoIndex})`);
+    console.log(`🎬 Navigating to video ID: ${videoId} (index: ${videoIndex})`);
   }, [currentIndex, handlePositionUpdate, videos]);
 
   // Navigate to specific index (maintains original scroll behavior)
-  const navigateToIndex = useCallback((index, navigationDirection = 'forward') => {
+  const navigateToIndex = useCallback((index: number, navigationDirection = 'forward'): void => {
     if (index < 0 || index >= videos.length) return;
     
     const videoId = videos[index].id;
@@ -1087,7 +1267,7 @@ export default function ReelsPlayer() {
   useEffect(() => {
     if (videos.length === 0) return;
 
-    const handleKeyDown = (e) => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'ArrowUp') {
         e.preventDefault();
         navigateUp();
@@ -1097,6 +1277,13 @@ export default function ReelsPlayer() {
       } else if (e.key === ' ') {
         e.preventDefault();
         setIsPaused(prev => !prev);
+      } else if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        // Mute/unmute all videos
+        const videos = containerRef.current?.querySelectorAll('video');
+        videos?.forEach(video => {
+          video.muted = !video.muted;
+        });
       }
     };
 
@@ -1110,11 +1297,11 @@ export default function ReelsPlayer() {
     const container = containerRef.current;
     if (!container) return;
 
-    const handleScroll = () => {
+    const handleScroll = (): void => {
       if (isScrollingRef.current) return;
       
       // Save current video position before changing
-      const currentVideo = container.querySelector(`[data-video-index="${currentIndex}"] video`);
+      const currentVideo = container.querySelector(`[data-video-index="${currentIndex}"] video`) as HTMLVideoElement;
       if (currentVideo && currentVideo.currentTime > 0) {
         const videoId = videos[currentIndex]?.id;
         if (videoId) {
@@ -1122,7 +1309,9 @@ export default function ReelsPlayer() {
         }
       }
       
-      clearTimeout(scrollTimeoutRef.current);
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
       scrollTimeoutRef.current = setTimeout(() => {
         const scrollTop = container.scrollTop;
         const windowHeight = window.innerHeight;
@@ -1141,7 +1330,7 @@ export default function ReelsPlayer() {
           // Update URL with new video ID
           updateUrl(videoId);
           
-          console.log(`âœ… ${newDirection} to video ${newIndex + 1} (ID: ${videoId})${getSavedPosition(videoId) > 0 && newDirection === 'forward' ? ' (resuming)' : ' (from start)'}`);
+          console.log(`✅ ${newDirection} to video ${newIndex + 1} (ID: ${videoId})${getSavedPosition(videoId) > 0 && newDirection === 'forward' ? ' (resuming)' : ' (from start)'}`);
         }
       }, 80);
     };
@@ -1149,18 +1338,20 @@ export default function ReelsPlayer() {
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => {
       container.removeEventListener('scroll', handleScroll);
-      clearTimeout(scrollTimeoutRef.current);
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
     };
   }, [currentIndex, handlePositionUpdate, getSavedPosition, videos]);
 
-  const scrollToIndex = (index) => {
+  const scrollToIndex = (index: number): void => {
     if (index < 0 || index >= videos.length) return;
     
     // Determine direction
     const newDirection = index > currentIndex ? 'forward' : 'backward';
     
     // Save current video position before navigating
-    const currentVideo = containerRef.current?.querySelector(`[data-video-index="${currentIndex}"] video`);
+    const currentVideo = containerRef.current?.querySelector(`[data-video-index="${currentIndex}"] video`) as HTMLVideoElement;
     if (currentVideo && currentVideo.currentTime > 0) {
       const videoId = videos[currentIndex]?.id;
       if (videoId) {
@@ -1172,10 +1363,12 @@ export default function ReelsPlayer() {
     const container = containerRef.current;
     const targetScroll = index * window.innerHeight;
     
-    container.scrollTo({
-      top: targetScroll,
-      behavior: 'smooth'
-    });
+    if (container) {
+      container.scrollTo({
+        top: targetScroll,
+        behavior: 'smooth'
+      });
+    }
 
     setTimeout(() => {
       isScrollingRef.current = false;
@@ -1190,19 +1383,19 @@ export default function ReelsPlayer() {
     }, 250);
   };
 
-  const navigateUp = () => {
+  const navigateUp = (): void => {
     if (currentIndex > 0) {
       scrollToIndex(currentIndex - 1);
     }
   };
 
-  const navigateDown = () => {
+  const navigateDown = (): void => {
     if (currentIndex < videos.length - 1) {
       scrollToIndex(currentIndex + 1);
     }
   };
 
-  const handleTogglePlay = () => {
+  const handleTogglePlay = (): void => {
     setIsPaused(prev => !prev);
   };
 
@@ -1351,7 +1544,7 @@ export default function ReelsPlayer() {
           backgroundColor: '#22c55e',
           boxShadow: '0 0 6px #22c55e'
         }} />
-        API â€¢ {videos.length} videos
+        API • {videos.length} videos
       </div>
 
       {/* Network Quality Indicator */}
@@ -1509,10 +1702,10 @@ export default function ReelsPlayer() {
           <span style={{ color: '#60a5fa', fontSize: '12px' }}>ID: {currentVideoId}</span>
         </div>
         {getSavedPosition(videos[currentIndex]?.id) > 0 && direction === 'forward' && (
-          <span style={{ marginLeft: '8px', color: '#eab308' }}>ðŸ”„</span>
+          <span style={{ marginLeft: '8px', color: '#eab308' }}>💾</span>
         )}
         <span style={{ marginLeft: '8px', color: direction === 'forward' ? '#22c55e' : '#ff6b6b' }}>
-          {direction === 'forward' ? 'â¬‡ï¸' : 'â¬†ï¸'}
+          {direction === 'forward' ? '⬇️' : '⬆️'}
         </span>
       </div>
 
