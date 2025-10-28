@@ -237,12 +237,6 @@ const APILoadingScreen: React.FC<APILoadingScreenProps> = ({ error }) => (
     ) : (
       <>
         <LoadingSpinner />
-        <div style={{ color: 'white', fontSize: '16px', fontWeight: 'bold' }}>
-          Loading videos from API...
-        </div>
-        <div style={{ color: '#999', fontSize: '12px' }}>
-          Fetching from {API_BASE_URL}{MASTER_PLAYLISTS_ENDPOINT}
-        </div>
       </>
     )}
   </div>
@@ -1516,69 +1510,9 @@ export default function ReelsPlayer() {
       </div>
 
       {/* API Status Indicator */}
-      <div
-        style={{
-          position: 'fixed',
-          top: '20px',
-          right: '20px',
-          zIndex: 50,
-          backgroundColor: 'rgba(0, 0, 0, 0.8)',
-          backdropFilter: 'blur(12px)',
-          color: 'white',
-          padding: '8px 16px',
-          borderRadius: '20px',
-          fontSize: '12px',
-          fontWeight: '700',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          WebkitBackdropFilter: 'blur(12px)',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-          border: '1px solid rgba(255,255,255,0.1)'
-        }}
-      >
-        <div style={{
-          width: '10px',
-          height: '10px',
-          borderRadius: '50%',
-          backgroundColor: '#22c55e',
-          boxShadow: '0 0 6px #22c55e'
-        }} />
-        API • {videos.length} videos
-      </div>
+      
 
       {/* Network Quality Indicator */}
-      <div
-        style={{
-          position: 'fixed',
-          top: '70px',
-          right: '20px',
-          zIndex: 50,
-          backgroundColor: 'rgba(0, 0, 0, 0.8)',
-          backdropFilter: 'blur(12px)',
-          color: 'white',
-          padding: '8px 16px',
-          borderRadius: '20px',
-          fontSize: '12px',
-          fontWeight: '700',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          WebkitBackdropFilter: 'blur(12px)',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-          border: '1px solid rgba(255,255,255,0.1)'
-        }}
-      >
-        <div style={{
-          width: '10px',
-          height: '10px',
-          borderRadius: '50%',
-          backgroundColor: networkQuality === 'high' ? '#22c55e' : networkQuality === 'medium' ? '#eab308' : '#ef4444',
-          boxShadow: `0 0 6px ${networkQuality === 'high' ? '#22c55e' : networkQuality === 'medium' ? '#eab308' : '#ef4444'}`
-        }} />
-        {effectiveType.toUpperCase()}
-        {bandwidth > 0 && ` (${bandwidth.toFixed(1)} Mbps)`}
-      </div>
 
       {/* Navigation Buttons */}
       <div
@@ -1679,35 +1613,6 @@ export default function ReelsPlayer() {
       </div>
 
       {/* Video Counter with ID Display */}
-      <div
-        style={{
-          position: 'fixed',
-          top: '20px',
-          left: 'max(20px, calc((100vw - calc(100vh * 9 / 16)) / 2 + 20px))',
-          zIndex: 50,
-          backgroundColor: 'rgba(0, 0, 0, 0.8)',
-          backdropFilter: 'blur(12px)',
-          color: 'white',
-          padding: '10px 18px',
-          borderRadius: '24px',
-          fontSize: '14px',
-          fontWeight: '700',
-          WebkitBackdropFilter: 'blur(12px)',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-          border: '1px solid rgba(255,255,255,0.1)'
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span>{currentIndex + 1} / {videos.length}</span>
-          <span style={{ color: '#60a5fa', fontSize: '12px' }}>ID: {currentVideoId}</span>
-        </div>
-        {getSavedPosition(videos[currentIndex]?.id) > 0 && direction === 'forward' && (
-          <span style={{ marginLeft: '8px', color: '#eab308' }}>💾</span>
-        )}
-        <span style={{ marginLeft: '8px', color: direction === 'forward' ? '#22c55e' : '#ff6b6b' }}>
-          {direction === 'forward' ? '⬇️' : '⬆️'}
-        </span>
-      </div>
 
       {/* Pause State Indicator */}
       {isPaused && (
