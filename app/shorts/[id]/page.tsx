@@ -48,6 +48,52 @@ interface IconProps {
   size?: number;
 }
 
+// =================== MASTER PLAYLIST PRELOADER ===================
+const useMasterPlaylistPreloader = (videos: Video[], currentIndex: number) => {
+  const preloadedMastersRef = useRef<Set<string>>(new Set());
+  
+  useEffect(() => {
+    if (videos.length === 0) return;
+    
+    // Preload master playlist for next video
+    const nextIndex = currentIndex + 1;
+    if (nextIndex < videos.length) {
+      const nextVideo = videos[nextIndex];
+      const nextVideoUrl = nextVideo.url;
+      
+      // Only preload if it's an HLS stream and not already preloaded
+      if (nextVideoUrl.includes('.m3u8') && !preloadedMastersRef.current.has(nextVideoUrl)) {
+        console.log(`📥 Preloading master playlist for next video: ${nextVideo.id}`);
+        
+        fetch(nextVideoUrl, {
+          method: 'HEAD',
+          mode: 'cors',
+          cache: 'force-cache'
+        })
+          .then(() => {
+            preloadedMastersRef.current.add(nextVideoUrl);
+            console.log(`✅ Master playlist preloaded for video ${nextVideo.id}`);
+          })
+          .catch(error => {
+            console.log(`⚠️ Master preload failed for video ${nextVideo.id}:`, error.message);
+          });
+      }
+    }
+    
+    // Cleanup: Clear preloaded masters when videos change significantly
+    return () => {
+      // Keep the Set for current session, only clear if videos array changes completely
+      if (videos.length === 0) {
+        preloadedMastersRef.current.clear();
+      }
+    };
+  }, [videos, currentIndex]);
+  
+  return {
+    isMasterPreloaded: (videoUrl: string) => preloadedMastersRef.current.has(videoUrl)
+  };
+};
+
 // =================== API UTILITIES ===================
 const fetchVideosFromAPI = async (): Promise<Video[]> => {
   try {
@@ -85,12 +131,13 @@ const getUrlParams = (): { [key: string]: string } => {
   return Object.fromEntries(urlParams.entries());
 };
 
-  const updateUrl = (videoId: string): void => {
-    if (typeof window === 'undefined') return;
-    const newUrl = `${window.location.pathname}?id=${videoId}`;
-    // Use replaceState to avoid browser history entries and prevent reloads
-    window.history.replaceState({ videoId }, '', newUrl);
-  };const getCurrentVideoIdFromUrl = (videos: Video[]): string => {
+const updateUrl = (videoId: string): void => {
+  if (typeof window === 'undefined') return;
+  const newUrl = `${window.location.pathname}?id=${videoId}`;
+  window.history.replaceState(null, '', newUrl);
+};
+
+const getCurrentVideoIdFromUrl = (videos: Video[]): string => {
   const params = getUrlParams();
   const urlId = params.id;
   
@@ -304,16 +351,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Enhanced play function with promise management
   const attemptPlay = useCallback(async (): Promise<void> => {
     const video = videoRef.current;
-    if (!video || !isActive || isPaused) {
-      // If attempting to play while paused, ensure we're properly paused
-      if (isPaused && video) {
-        video.pause();
-        setIsPlaying(false);
-        setIsMuted(true);
-        video.muted = true;
-      }
-      return;
-    }
+    if (!video || !isActive || isPaused) return; // Don't play if not active or paused
 
     try {
       // Clear any existing play promise
@@ -324,15 +362,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
           // Ignore errors from previous promise
         }
         playPromiseRef.current = null;
-      }
-
-      // Double-check pause state before attempting to play
-      if (isPaused) {
-        video.pause();
-        setIsPlaying(false);
-        setIsMuted(true);
-        video.muted = true;
-        return;
       }
 
       console.log(`[${videoId}] 🚀 Starting playback`);
@@ -351,11 +380,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         console.log(`[${videoId}] ✅ Playing successfully`);
       } else {
         // If conditions changed during play, pause immediately
-        video.pause();
-        setIsPlaying(false);
-        setIsMuted(true);
-        video.muted = true;
-        console.log(`[${videoId}] ⏸️ Paused (state changed during play)`);
+        await attemptPause();
       }
 
     } catch (error: any) {
@@ -886,27 +911,15 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (!video || loadingMode === 'none' || !manifestLoaded || !segmentsReady) return;
 
     const handlePlayPause = async (): Promise<void> => {
-      // Force pause immediately if paused
-      if (isPaused) {
-        setIsPlaying(false);
-        setIsMuted(true);
-        video.muted = true;
-        await video.pause();
-        return;
-      }
-
-      // Only play if active, not paused, and has resumed
       if (isActive && !isPaused && hasResumed) {
+        // Only attempt play if video is fully ready and active
         if (video.readyState >= 2) {
-          if (!video.paused) {
-            await video.pause();
-          }
           await attemptPlay();
         } else {
           video.addEventListener('canplay', attemptPlay, { once: true });
         }
       } else {
-        // Ensure pause in all other cases
+        // Pause in all other cases (not active or paused)
         await attemptPause();
       }
     };
@@ -914,26 +927,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // Immediate play/pause handling
     handlePlayPause();
 
-    // Watch for video playing when it shouldn't be
-    const handlePlay = async () => {
-      if (isPaused || !isActive) {
-        await video.pause();
-        video.muted = true;
-        setIsPlaying(false);
-        setIsMuted(true);
-      }
-    };
-
-    video.addEventListener('play', handlePlay);
-
     return () => {
-      video.removeEventListener('play', handlePlay);
       // Ensure video is paused when unmounting or changing videos
       if (video) {
         video.pause();
         video.muted = true;
-        setIsPlaying(false);
-        setIsMuted(true);
       }
     };
   }, [isActive, isPaused, manifestLoaded, segmentsReady, hasResumed, attemptPlay, attemptPause]);
@@ -959,9 +957,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => clearInterval(interval);
   }, [videoId, loadingMode, bufferProgress]);
 
-  const handleClick = (e: React.MouseEvent): void => {
-    e.preventDefault();
-    e.stopPropagation();
+  const handleClick = (): void => {
     onTogglePlay();
     setShowIcon(true);
     setTimeout(() => setShowIcon(false), 500);
@@ -1093,7 +1089,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
         <button
           onClick={(e) => {
-            e.preventDefault();
             e.stopPropagation();
             toggleMute();
           }}
@@ -1208,6 +1203,9 @@ export default function ReelsPlayer() {
 
   const videoPositionsRef = useRef<VideoPositions>({});
   const [videoPositions, setVideoPositions] = useState<VideoPositions>({});
+
+  // Initialize master playlist preloader
+  const { isMasterPreloaded } = useMasterPlaylistPreloader(videos, currentIndex);
 
   // Load videos from API on mount
   useEffect(() => {
@@ -1343,18 +1341,17 @@ export default function ReelsPlayer() {
     if (videos.length === 0) return;
 
     const handleKeyDown = (e: KeyboardEvent): void => {
-      // Prevent default behavior for all our keyboard shortcuts
-      if (['ArrowUp', 'ArrowDown', ' ', 'm', 'M'].includes(e.key)) {
-        e.preventDefault();
-      }
-
       if (e.key === 'ArrowUp') {
+        e.preventDefault();
         navigateUp();
       } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
         navigateDown();
       } else if (e.key === ' ') {
+        e.preventDefault();
         setIsPaused(prev => !prev);
       } else if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
         // Mute/unmute all videos
         const videos = containerRef.current?.querySelectorAll('video');
         videos?.forEach(video => {
@@ -1420,12 +1417,7 @@ export default function ReelsPlayer() {
     };
   }, [currentIndex, handlePositionUpdate, getSavedPosition, videos]);
 
-  const scrollToIndex = (index: number, e?: React.SyntheticEvent): void => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    
+  const scrollToIndex = (index: number): void => {
     if (index < 0 || index >= videos.length) return;
     
     // Determine direction
@@ -1476,11 +1468,7 @@ export default function ReelsPlayer() {
     }
   };
 
-  const handleTogglePlay = (e?: React.SyntheticEvent): void => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
+  const handleTogglePlay = (): void => {
     setIsPaused(prev => !prev);
   };
 
