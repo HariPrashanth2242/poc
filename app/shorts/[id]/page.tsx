@@ -85,13 +85,12 @@ const getUrlParams = (): { [key: string]: string } => {
   return Object.fromEntries(urlParams.entries());
 };
 
-const updateUrl = (videoId: string): void => {
-  if (typeof window === 'undefined') return;
-  const newUrl = `${window.location.pathname}?id=${videoId}`;
-  window.history.replaceState(null, '', newUrl);
-};
-
-const getCurrentVideoIdFromUrl = (videos: Video[]): string => {
+  const updateUrl = (videoId: string): void => {
+    if (typeof window === 'undefined') return;
+    const newUrl = `${window.location.pathname}?id=${videoId}`;
+    // Use replaceState to avoid browser history entries and prevent reloads
+    window.history.replaceState({ videoId }, '', newUrl);
+  };const getCurrentVideoIdFromUrl = (videos: Video[]): string => {
   const params = getUrlParams();
   const urlId = params.id;
   
@@ -260,25 +259,23 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onVideoReady,
   direction
 }) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const hlsRef = useRef<Hls | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [showIcon, setShowIcon] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [currentQuality, setCurrentQuality] = useState<number | null>(null);
-  const [bufferProgress, setBufferProgress] = useState(0);
-  const [isPreloaded, setIsPreloaded] = useState(false);
-  const [manifestLoaded, setManifestLoaded] = useState(false);
-  const [segmentsReady, setSegmentsReady] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [hasResumed, setHasResumed] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(true); // Start muted for autoplay
-  const [volume, setVolume] = useState(0.7);
-  const [showVolumeControl, setShowVolumeControl] = useState(false);
-  
-  // Play promise management to prevent interruption errors
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const hlsRef = useRef<Hls | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [showIcon, setShowIcon] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
+    const [currentQuality, setCurrentQuality] = useState<number | null>(null);
+    const [bufferProgress, setBufferProgress] = useState(0);
+    const [isPreloaded, setIsPreloaded] = useState(false);
+    const [manifestLoaded, setManifestLoaded] = useState(false);
+    const [segmentsReady, setSegmentsReady] = useState(false);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(0);
+    const [hasResumed, setHasResumed] = useState(false);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [isMuted, setIsMuted] = useState(!isActive); // Start muted only if not active
+    const [volume, setVolume] = useState(0.7);
+    const [showVolumeControl, setShowVolumeControl] = useState(false);  // Play promise management to prevent interruption errors
   const playPromiseRef = useRef<Promise<void> | null>(null);
   const lastSavedTimeRef = useRef(0);
   
@@ -307,7 +304,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Enhanced play function with promise management
   const attemptPlay = useCallback(async (): Promise<void> => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !isActive || isPaused) {
+      // If attempting to play while paused, ensure we're properly paused
+      if (isPaused && video) {
+        video.pause();
+        setIsPlaying(false);
+        setIsMuted(true);
+        video.muted = true;
+      }
+      return;
+    }
 
     try {
       // Clear any existing play promise
@@ -320,6 +326,15 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         playPromiseRef.current = null;
       }
 
+      // Double-check pause state before attempting to play
+      if (isPaused) {
+        video.pause();
+        setIsPlaying(false);
+        setIsMuted(true);
+        video.muted = true;
+        return;
+      }
+
       console.log(`[${videoId}] 🚀 Starting playback`);
       
       const playPromise = video.play();
@@ -327,14 +342,27 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       await playPromise;
       
-      setIsPlaying(true);
-      playPromiseRef.current = null;
-      
-      console.log(`[${videoId}] ✅ Playing successfully`);
+      // Only continue if still active and not paused
+      if (isActive && !isPaused) {
+        setIsPlaying(true);
+        setIsMuted(false);
+        video.muted = false;
+        playPromiseRef.current = null;
+        console.log(`[${videoId}] ✅ Playing successfully`);
+      } else {
+        // If conditions changed during play, pause immediately
+        video.pause();
+        setIsPlaying(false);
+        setIsMuted(true);
+        video.muted = true;
+        console.log(`[${videoId}] ⏸️ Paused (state changed during play)`);
+      }
 
     } catch (error: any) {
       playPromiseRef.current = null;
       setIsPlaying(false);
+      setIsMuted(false);
+      video.muted = false;
       
       if (error.name === 'AbortError') {
         console.log(`[${videoId}] Play was aborted, retrying...`);
@@ -360,21 +388,27 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     try {
       // Wait for any pending play promise to resolve
       if (playPromiseRef.current) {
-        try {
-          await playPromiseRef.current;
-        } catch (err) {
-          // Ignore promise rejection
-        }
+        video.pause();
+        setIsPlaying(false);
+        setIsMuted(true);
+        video.muted = true; // Mute when not playing
+        console.log(`[${videoId}] ⏸️ Paused`);
         playPromiseRef.current = null;
       }
 
-      video.pause();
-      setIsPlaying(false);
-      console.log(`[${videoId}] ⏸️ Paused`);
-      
-      // Save position when pausing
-      if (video.currentTime > 0) {
-        onPositionUpdate?.(videoId, video.currentTime);
+      try {
+        await video.pause();
+        setIsPlaying(false);
+        setIsMuted(true);
+        video.muted = true;
+        console.log(`[${videoId}] ⏸️ Paused`);
+        
+        // Save position when pausing
+        if (video.currentTime > 0) {
+          onPositionUpdate?.(videoId, video.currentTime);
+        }
+      } catch (err) {
+        console.error(`[${videoId}] Error pausing:`, err);
       }
     } catch (error: any) {
       console.log(`[${videoId}] Pause error:`, error.message);
@@ -572,13 +606,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     console.log(`[${videoId}] Initializing (${loadingMode})`);
 
     // Set video attributes for autoplay
-    video.setAttribute('playsinline', '');
-    video.setAttribute('webkit-playsinline', '');
-    video.crossOrigin = 'anonymous'; // Important for CORS
-    video.muted = isMuted; // Start muted for autoplay
-    video.volume = volume;
-
-    if (isHLS) {
+      video.setAttribute('playsinline', '');
+      video.setAttribute('webkit-playsinline', '');
+      video.crossOrigin = 'anonymous'; // Important for CORS
+      video.volume = volume;
+      
+      // Only mute if not active or explicitly muted
+      if (!isActive || isPaused) {
+        video.muted = true;
+        setIsMuted(true);
+      } else {
+        video.muted = false;
+        setIsMuted(false);
+      }    if (isHLS) {
       if (Hls.isSupported()) {
         const hls = new Hls(getHlsConfig(networkQuality, loadingMode));
 
@@ -606,6 +646,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         const handlePause = (): void => {
           setIsPlaying(false);
+          setIsPlaying(false);
+         setIsMuted(true);
+    video.muted = true;
           console.log(`[${videoId}] ⏸️ HLS Paused`);
         };
 
@@ -742,6 +785,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         const handlePause = (): void => {
           setIsPlaying(false);
+          setIsPlaying(false);
+         setIsMuted(true);
+    video.muted = true;
           console.log(`[${videoId}] ⏸️ Paused`);
         };
         
@@ -807,17 +853,32 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Reset video state on navigation
   useEffect(() => {
-    if (isActive && segmentsReady) {
-      setShowIcon(false);
-      setIsPlaying(!isPaused);
-      
-      // Reset HLS loading if needed
-      if (hlsRef.current && !initializationStateRef.current.loadStarted) {
-        hlsRef.current.startLoad(0);
-        initializationStateRef.current.loadStarted = true;
-      }
+    if (!isActive || !segmentsReady) return;
+    
+    setShowIcon(false);
+    setIsPlaying(!isPaused);
+
+    const video = videoRef.current;
+    if (!video) return;
+
+    // Pause video when not active
+    if (!isActive) {
+      attemptPause();
     }
-  }, [isActive, segmentsReady, isPaused]);
+    
+    // Reset HLS loading if needed
+    if (hlsRef.current && !initializationStateRef.current.loadStarted) {
+      hlsRef.current.startLoad(0);
+      initializationStateRef.current.loadStarted = true;
+    }
+
+    // Ensure video state matches isPaused
+    if (isPaused && !video.paused) {
+      attemptPause();
+    } else if (!isPaused && video.paused && isActive) {
+      attemptPlay();
+    }
+  }, [isActive, segmentsReady, isPaused, attemptPlay, attemptPause]);
 
   // Enhanced play/pause handling with promise management
   useEffect(() => {
@@ -825,23 +886,56 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (!video || loadingMode === 'none' || !manifestLoaded || !segmentsReady) return;
 
     const handlePlayPause = async (): Promise<void> => {
+      // Force pause immediately if paused
+      if (isPaused) {
+        setIsPlaying(false);
+        setIsMuted(true);
+        video.muted = true;
+        await video.pause();
+        return;
+      }
+
+      // Only play if active, not paused, and has resumed
       if (isActive && !isPaused && hasResumed) {
-        // Only attempt play if video is fully ready
         if (video.readyState >= 2) {
+          if (!video.paused) {
+            await video.pause();
+          }
           await attemptPlay();
         } else {
           video.addEventListener('canplay', attemptPlay, { once: true });
         }
-      } else if (isActive && isPaused) {
-        await attemptPause();
-      } else if (!isActive) {
-        // Pause when not active
+      } else {
+        // Ensure pause in all other cases
         await attemptPause();
       }
     };
 
-    const timeoutId = setTimeout(handlePlayPause, 100);
-    return () => clearTimeout(timeoutId);
+    // Immediate play/pause handling
+    handlePlayPause();
+
+    // Watch for video playing when it shouldn't be
+    const handlePlay = async () => {
+      if (isPaused || !isActive) {
+        await video.pause();
+        video.muted = true;
+        setIsPlaying(false);
+        setIsMuted(true);
+      }
+    };
+
+    video.addEventListener('play', handlePlay);
+
+    return () => {
+      video.removeEventListener('play', handlePlay);
+      // Ensure video is paused when unmounting or changing videos
+      if (video) {
+        video.pause();
+        video.muted = true;
+        setIsPlaying(false);
+        setIsMuted(true);
+      }
+    };
   }, [isActive, isPaused, manifestLoaded, segmentsReady, hasResumed, attemptPlay, attemptPause]);
 
   // Buffer monitoring
@@ -865,7 +959,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => clearInterval(interval);
   }, [videoId, loadingMode, bufferProgress]);
 
-  const handleClick = (): void => {
+  const handleClick = (e: React.MouseEvent): void => {
+    e.preventDefault();
+    e.stopPropagation();
     onTogglePlay();
     setShowIcon(true);
     setTimeout(() => setShowIcon(false), 500);
@@ -891,22 +987,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       </div>
     );
   }
-
-  if (loadingMode === 'none') {
-    return (
-      <div style={{
-        position: 'absolute',
-        inset: 0,
-        backgroundColor: '#000',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center'
-      }}>
-        <div style={{ color: '#666', fontSize: '14px' }}>Scroll to load</div>
-      </div>
-    );
-  }
-
   return (
     <div 
       onClick={handleClick}
@@ -1013,6 +1093,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
         <button
           onClick={(e) => {
+            e.preventDefault();
             e.stopPropagation();
             toggleMute();
           }}
@@ -1262,17 +1343,18 @@ export default function ReelsPlayer() {
     if (videos.length === 0) return;
 
     const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'ArrowUp') {
+      // Prevent default behavior for all our keyboard shortcuts
+      if (['ArrowUp', 'ArrowDown', ' ', 'm', 'M'].includes(e.key)) {
         e.preventDefault();
+      }
+
+      if (e.key === 'ArrowUp') {
         navigateUp();
       } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
         navigateDown();
       } else if (e.key === ' ') {
-        e.preventDefault();
         setIsPaused(prev => !prev);
       } else if (e.key === 'm' || e.key === 'M') {
-        e.preventDefault();
         // Mute/unmute all videos
         const videos = containerRef.current?.querySelectorAll('video');
         videos?.forEach(video => {
@@ -1338,7 +1420,12 @@ export default function ReelsPlayer() {
     };
   }, [currentIndex, handlePositionUpdate, getSavedPosition, videos]);
 
-  const scrollToIndex = (index: number): void => {
+  const scrollToIndex = (index: number, e?: React.SyntheticEvent): void => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
     if (index < 0 || index >= videos.length) return;
     
     // Determine direction
@@ -1389,7 +1476,11 @@ export default function ReelsPlayer() {
     }
   };
 
-  const handleTogglePlay = (): void => {
+  const handleTogglePlay = (e?: React.SyntheticEvent): void => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     setIsPaused(prev => !prev);
   };
 
