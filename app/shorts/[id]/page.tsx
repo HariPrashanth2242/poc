@@ -55,7 +55,7 @@ const useMasterPlaylistPreloader = (videos: Video[], currentIndex: number) => {
   useEffect(() => {
     if (videos.length === 0) return;
     
-    // Preload master playlist for next video
+    // Preload master playlist for next video (forward)
     const nextIndex = currentIndex + 1;
     if (nextIndex < videos.length) {
       const nextVideo = videos[nextIndex];
@@ -76,6 +76,31 @@ const useMasterPlaylistPreloader = (videos: Video[], currentIndex: number) => {
           })
           .catch(error => {
             console.log(`⚠️ Master preload failed for video ${nextVideo.id}:`, error.message);
+          });
+      }
+    }
+
+    // Also preload master playlist for previous video (backward)
+    const prevIndex = currentIndex - 1;
+    if (prevIndex >= 0) {
+      const prevVideo = videos[prevIndex];
+      const prevVideoUrl = prevVideo.url;
+      
+      // Only preload if it's an HLS stream and not already preloaded
+      if (prevVideoUrl.includes('.m3u8') && !preloadedMastersRef.current.has(prevVideoUrl)) {
+        console.log(`📥 Preloading master playlist for previous video: ${prevVideo.id}`);
+        
+        fetch(prevVideoUrl, {
+          method: 'HEAD',
+          mode: 'cors',
+          cache: 'force-cache'
+        })
+          .then(() => {
+            preloadedMastersRef.current.add(prevVideoUrl);
+            console.log(`✅ Master playlist preloaded for video ${prevVideo.id}`);
+          })
+          .catch(error => {
+            console.log(`⚠️ Master preload failed for video ${prevVideo.id}:`, error.message);
           });
       }
     }
@@ -509,9 +534,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // Always reset hasResumed when video becomes ready
     setHasResumed(false);
     
-    // Only resume if going forward and has meaningful saved position
+    // Resume from saved position when navigating forward
+    // Also resume when navigating backward and there's a saved position
     const RESUME_THRESHOLD = 3;
-    if (savedPosition && savedPosition > RESUME_THRESHOLD && isActive && direction === 'forward') {
+    if (savedPosition && savedPosition > RESUME_THRESHOLD && isActive) {
       console.log(`[${videoId}] 💾 Resuming from ${formatTime(savedPosition)}`);
       
       const seekToPosition = (): void => {
@@ -614,9 +640,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const video = videoRef.current;
     if (!video || loadingMode === 'none') return;
 
-    // ✅ Don't cleanup previous instance if it exists and is preloaded
+    // ✅ Reuse preloaded HLS instance for both forward and backward navigation
     if (hlsRef.current && initializationStateRef.current.isPreloadComplete) {
-      console.log(`[${videoId}] Reusing preloaded HLS instance`);
+      console.log(`[${videoId}] Reusing preloaded HLS instance (direction: ${direction})`);
       
       // Just start full loading from the existing instance
       if (loadingMode === 'full' && !initializationStateRef.current.loadStarted) {
@@ -900,7 +926,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         video.removeEventListener('timeupdate', handleTimeUpdate);
       };
     }
-  }, [src, loadingMode, networkQuality, videoId, getHlsConfig, onLoadedMetadata, handleVideoReady, isActive, onPositionUpdate, isMuted, volume, isPreloaded, shouldLoad, shouldPreload]);
+  }, [src, loadingMode, networkQuality, videoId, getHlsConfig, onLoadedMetadata, handleVideoReady, isActive, onPositionUpdate, isMuted, volume, isPreloaded, shouldLoad, shouldPreload, direction]);
 
   // Reset video state on navigation
   useEffect(() => {
@@ -1053,7 +1079,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
           boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
           border: '1px solid rgba(34, 197, 94, 0.5)'
         }}>
-          ⚡ Ready {savedPosition > 0 && direction === 'forward' && `@ ${formatTime(savedPosition)}`}
+          ⚡ Ready {savedPosition > 0 && `@ ${formatTime(savedPosition)}`}
         </div>
       )}
       
@@ -1071,7 +1097,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {(isPaused || !isPlaying) && !showIcon && isActive && segmentsReady && !isLoading && !initializationStateRef.current.loadStarted && (
+      {(isPaused || !isPlaying) && !showIcon && isActive && segmentsReady && !isLoading && (
         <div style={{
           position: 'absolute',
           top: '50%',
@@ -1326,8 +1352,17 @@ export default function ReelsPlayer() {
     return index === currentIndex;
   }, [currentIndex]);
 
+  // ✅ Enhanced preload range to include both forward and backward videos
   const shouldPreloadVideo = useCallback((index: number): boolean => {
-    return index > currentIndex && index <= currentIndex + 2;
+    // Preload next 2 videos (forward)
+    if (index > currentIndex && index <= currentIndex + 2) {
+      return true;
+    }
+    // Also preload previous 1 video (backward)
+    if (index < currentIndex && index >= currentIndex - 1) {
+      return true;
+    }
+    return false;
   }, [currentIndex]);
 
   // Navigate to specific video by ID
@@ -1379,8 +1414,8 @@ export default function ReelsPlayer() {
       } else if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
         // Mute/unmute all videos
-        const videos = containerRef.current?.querySelectorAll('video');
-        videos?.forEach(video => {
+        const videoElements = containerRef.current?.querySelectorAll('video');
+        videoElements?.forEach(video => {
           video.muted = !video.muted;
         });
       }
@@ -1430,7 +1465,7 @@ export default function ReelsPlayer() {
           // Update URL with new video ID
           updateUrl(videoId);
           
-          console.log(`✅ ${newDirection} to video ${newIndex + 1} (ID: ${videoId})${getSavedPosition(videoId) > 0 && newDirection === 'forward' ? ' (resuming)' : ' (from start)'}`);
+          console.log(`✅ ${newDirection} to video ${newIndex + 1} (ID: ${videoId})${getSavedPosition(videoId) > 0 ? ' (resuming)' : ' (from start)'}`);
         }
       }, 80);
     };
@@ -1673,14 +1708,14 @@ export default function ReelsPlayer() {
                   width: index === currentIndex ? '14px' : '10px',
                   height: index === currentIndex ? '14px' : '10px',
                   borderRadius: '50%',
-                  border: hasPosition && direction === 'forward' ? '2px solid #eab308' : 'none',
-                  backgroundColor: index === currentIndex ? '#22c55e' : hasPosition && direction === 'forward' ? '#eab308' : 'rgba(255, 255, 255, 0.6)',
+                  border: hasPosition ? '2px solid #eab308' : 'none',
+                  backgroundColor: index === currentIndex ? '#22c55e' : hasPosition ? '#eab308' : 'rgba(255, 255, 255, 0.6)',
                   cursor: 'pointer',
                   transition: 'all 0.3s ease',
                   padding: 0,
                   boxShadow: index === currentIndex 
                     ? '0 0 8px rgba(34, 197, 94, 0.6)' 
-                    : hasPosition && direction === 'forward'
+                    : hasPosition
                       ? '0 0 6px rgba(234, 179, 8, 0.5)' 
                       : 'none'
                 }}
