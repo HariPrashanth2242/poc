@@ -1063,25 +1063,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       />
       
       {isLoading && !segmentsReady && <LoadingSpinner />}
-      
-      {loadingMode === 'preload' && isPreloaded && (
-        <div style={{
-          position: 'absolute',
-          top: '10px',
-          right: '10px',
-          backgroundColor: 'rgba(34, 197, 94, 0.9)',
-          color: 'white',
-          padding: '6px 12px',
-          borderRadius: '8px',
-          fontSize: '11px',
-          fontWeight: '700',
-          zIndex: 10,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
-          border: '1px solid rgba(34, 197, 94, 0.5)'
-        }}>
-          ⚡ Ready {savedPosition > 0 && `@ ${formatTime(savedPosition)}`}
-        </div>
-      )}
+
       
       {showIcon && (
         <div style={{
@@ -1548,9 +1530,17 @@ export default function ReelsPlayer() {
           padding: 0;
           box-sizing: border-box;
         }
-        body {
+        html, body {
+          width: 100%;
+          height: 100%;
           overflow: hidden;
+          position: fixed;
           background: #000;
+          overscroll-behavior: none;
+        }
+        #__next {
+          width: 100%;
+          height: 100%;
         }
         ::-webkit-scrollbar {
           display: none;
@@ -1569,9 +1559,57 @@ export default function ReelsPlayer() {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
         }
+        
+        /* Hide navigation buttons on mobile devices */
+        /* Video player container styles */
+        .video-container {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          max-width: 420px;
+          margin: 0 auto;
+          background: #000;
+        }
+        
+        /* Navigation button positioning */
+        @media (min-width: 769px) {
+          .navigation-buttons {
+            display: flex !important;
+            right: calc(50% - 210px - 60px) !important; /* 210px is half of container width */
+          }
+          .nav-arrow {
+            display: flex !important;
+          }
+        }
+        
+        @media (max-width: 768px) {
+          .navigation-buttons {
+            right: 16px !important;
+          }
+          .nav-arrow {
+            display: none !important;
+          }
+        }
+        
+        /* Add background overlay on desktop */
+        @media (min-width: 769px) {
+          .background-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(to right, rgba(0,0,0,0.7), rgba(0,0,0,0.4) 30%, rgba(0,0,0,0.4) 70%, rgba(0,0,0,0.7));
+            z-index: 1;
+            pointer-events: none;
+          }
+        }
       `}</style>
 
-      {/* Main Container */}
+      {/* Background overlay for desktop */}
+      <div className="background-overlay" />
+
+      {/* Main Container - Fixed with proper mobile viewport handling */}
       <div
         ref={containerRef}
         style={{
@@ -1585,7 +1623,10 @@ export default function ReelsPlayer() {
           scrollSnapType: 'y mandatory',
           scrollbarWidth: 'none',
           msOverflowStyle: 'none',
-          backgroundColor: '#000'
+          backgroundColor: '#000',
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehavior: 'none',
+          zIndex: 2 // Ensure container is above background overlay
         }}
       >
         {videos.map((video, index) => (
@@ -1596,17 +1637,25 @@ export default function ReelsPlayer() {
               position: 'relative',
               width: '100vw',
               height: '100vh',
+              //height: '100dvh', // Dynamic viewport height for mobile
+              minHeight: '100vh',
+              //minHeight: '100dvh',
+              maxHeight: '100vh',
+              //maxHeight: '100dvh',
               scrollSnapAlign: 'start',
               scrollSnapStop: 'always',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: '#000'
+              backgroundColor: '#000',
+              overflow: 'hidden' // Prevent any content bleeding
             }}
           >
             <div
               style={{
-                position: 'relative',
+                position: 'absolute',
+                top: 0,
+                left: 0,
                 width: '100%',
                 height: '100%',
                 display: 'flex',
@@ -1620,7 +1669,9 @@ export default function ReelsPlayer() {
                   position: 'relative',
                   width: '100%',
                   height: '100%',
-                  maxWidth: 'calc(100vh * 9 / 16)',
+                  maxWidth: '420px', // Fixed width for mobile-like experience
+                  margin: '0 auto',
+                  maxHeight: '100vh',
                   aspectRatio: '9 / 16',
                   backgroundColor: '#000'
                 }}
@@ -1650,11 +1701,12 @@ export default function ReelsPlayer() {
         ))}
       </div>
 
-      {/* Navigation Buttons */}
+      {/* Navigation Buttons - Hidden on Mobile */}
       <div
+        className="navigation-buttons"
         style={{
           position: 'fixed',
-          right: 'max(16px, calc((100vw - calc(100vh * 9 / 16)) / 2 + 16px))',
+          right: 'calc(50% - 210px - 60px)', // Positioned relative to the video container
           top: '50%',
           transform: 'translateY(-50%)',
           zIndex: 50,
@@ -1665,6 +1717,7 @@ export default function ReelsPlayer() {
         }}
       >
         <button
+          className="nav-arrow"
           onClick={navigateUp}
           disabled={currentIndex === 0}
           style={{
@@ -1725,6 +1778,7 @@ export default function ReelsPlayer() {
         </div>
 
         <button
+          className="nav-arrow"
           onClick={navigateDown}
           disabled={currentIndex === videos.length - 1}
           style={{
@@ -1776,6 +1830,6 @@ export default function ReelsPlayer() {
           Tap to play
         </div>
       )}
-    </>
+    </> 
   );
 }
